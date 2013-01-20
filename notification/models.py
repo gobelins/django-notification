@@ -3,20 +3,19 @@ import datetime
 try:
     import cPickle as pickle
 except ImportError:
-    import pickle
+    import pickle  # NOQA
 
 from django.db import models
 from django.db.models.query import QuerySet
 from django.conf import settings
-from django.core.mail import send_mail
 from django.core.urlresolvers import reverse
 from django.template import Context
 from django.template.loader import render_to_string
+from django.core.mail import EmailMessage
 
 from django.core.exceptions import ImproperlyConfigured
 
 from django.contrib.sites.models import Site
-from django.contrib.auth.models import User
 from django.contrib.auth.models import AnonymousUser
 
 from django.contrib.contenttypes.models import ContentType
@@ -31,10 +30,15 @@ except ImportError:
     now = datetime.datetime.now
 
 
+from notification.compat import User
+
+
 QUEUE_ALL = getattr(settings, "NOTIFICATION_QUEUE_ALL", False)
+
 
 class LanguageStoreNotAvailable(Exception):
     pass
+
 
 class NoticeType(models.Model):
 
@@ -60,8 +64,9 @@ NOTICE_MEDIA = (
 
 # how spam-sensitive is the medium
 NOTICE_MEDIA_DEFAULTS = {
-    "1": 2 # email
+    "1": 2  # email
 }
+
 
 class NoticeSetting(models.Model):
     """
@@ -79,6 +84,7 @@ class NoticeSetting(models.Model):
         verbose_name_plural = _("notice settings")
         unique_together = ("user", "notice_type", "medium")
 
+
 def get_notification_setting(user, notice_type, medium):
     try:
         return NoticeSetting.objects.get(user=user, notice_type=notice_type, medium=medium)
@@ -87,6 +93,7 @@ def get_notification_setting(user, notice_type, medium):
         setting = NoticeSetting(user=user, notice_type=notice_type, medium=medium, send=default)
         setting.save()
         return setting
+
 
 def should_send(user, notice_type, medium):
     return get_notification_setting(user, notice_type, medium).send
@@ -124,14 +131,14 @@ class NoticeManager(models.Manager):
         mark them seen
         """
         return self.notices_for(recipient, unseen=True, **kwargs).count()
-    
+
     def received(self, recipient, **kwargs):
         """
         returns notices the given recipient has recieved.
         """
         kwargs["sent"] = False
         return self.notices_for(recipient, **kwargs)
-    
+
     def sent(self, sender, **kwargs):
         """
         returns notices the given sender has sent
@@ -139,8 +146,8 @@ class NoticeManager(models.Manager):
         kwargs["sent"] = True
         return self.notices_for(sender, **kwargs)
 
-class Notice(models.Model):
 
+class Notice(models.Model):
     recipient = models.ForeignKey(User, related_name='recieved_notices', verbose_name=_('recipient'))
     sender = models.ForeignKey(User, null=True, related_name='sent_notices', verbose_name=_('sender'))
     message = models.TextField(_('message'))
@@ -181,12 +188,14 @@ class Notice(models.Model):
         return ("notification_notice", [str(self.pk)])
     get_absolute_url = models.permalink(get_absolute_url)
 
+
 class NoticeQueueBatch(models.Model):
     """
     A queued notice.
     Denormalized data for a notice.
     """
     pickled_data = models.TextField()
+
 
 def create_notice_type(label, display, description, default=2, verbosity=1):
     """
@@ -215,6 +224,7 @@ def create_notice_type(label, display, description, default=2, verbosity=1):
         if verbosity > 1:
             print "Created %s NoticeType" % label
 
+
 def get_notification_language(user):
     """
     Returns site-specific notification language for this user. Raises
@@ -231,6 +241,7 @@ def get_notification_language(user):
         except (ImportError, ImproperlyConfigured, model.DoesNotExist):
             raise LanguageStoreNotAvailable
     raise LanguageStoreNotAvailable
+
 
 def get_formatted_messages(formats, label, context):
     """
@@ -249,6 +260,7 @@ def get_formatted_messages(formats, label, context):
             'notification/%s' % format), context_instance=context)
     return format_templates
 
+
 def send_now(users, label, extra_context=None, on_site=True, sender=None,
              from_email=settings.DEFAULT_FROM_EMAIL, headers=None):
     """
@@ -260,7 +272,7 @@ def send_now(users, label, extra_context=None, on_site=True, sender=None,
         'spam': 'eggs',
         'foo': 'bar',
     )
-    
+
     You can pass in on_site=False to prevent the notice emitted from being
     displayed on the site.
     """
@@ -285,7 +297,7 @@ def send_now(users, label, extra_context=None, on_site=True, sender=None,
         'full.txt',
         'notice.html',
         'full.html',
-    ) # TODO make formats configurable
+    )  # TODO make formats configurable
 
     for user in users:
         recipients = []
@@ -323,11 +335,11 @@ def send_now(users, label, extra_context=None, on_site=True, sender=None,
             'message': messages['full.txt'],
         }, context)
 
-        notice = Notice.objects.create(recipient=user, message=messages['notice.html'],
-            notice_type=notice_type, on_site=on_site, sender=sender)
-        if should_send(user, notice_type, "1") and user.email and user.is_active: # Email
+        Notice.objects.create(recipient=user, message=messages['notice.html'],
+                              notice_type=notice_type, on_site=on_site, sender=sender)
+        if should_send(user, notice_type, "1") and user.email and user.is_active:
             recipients.append(user.email)
-        
+
         if messages['full.html']:
             from django.core.mail import EmailMultiAlternatives
             # check if premailer is enabled
@@ -343,6 +355,7 @@ def send_now(users, label, extra_context=None, on_site=True, sender=None,
 
     # reset environment to original language
     activate(current_language)
+
 
 def send(*args, **kwargs):
     """
@@ -363,7 +376,8 @@ def send(*args, **kwargs):
             return queue(*args, **kwargs)
         else:
             return send_now(*args, **kwargs)
-        
+
+
 def queue(users, label, extra_context=None, on_site=True, sender=None):
     """
     Queue the notification in NoticeQueueBatch. This allows for large amounts
@@ -380,6 +394,7 @@ def queue(users, label, extra_context=None, on_site=True, sender=None):
     for user in users:
         notices.append((user, label, extra_context, on_site, sender))
     NoticeQueueBatch(pickled_data=pickle.dumps(notices).encode("base64")).save()
+
 
 class ObservedItemManager(models.Manager):
 
@@ -399,7 +414,6 @@ class ObservedItemManager(models.Manager):
 
 
 class ObservedItem(models.Model):
-
     user = models.ForeignKey(User, verbose_name=_('user'))
 
     content_type = models.ForeignKey(ContentType)
@@ -426,6 +440,7 @@ class ObservedItem(models.Model):
         extra_context.update({'observed': self.observed_object})
         send([self.user], self.notice_type.label, extra_context)
 
+
 def observe(observed, observer, notice_type_label, signal='post_save'):
     """
     Create a new ObservedItem.
@@ -438,12 +453,14 @@ def observe(observed, observer, notice_type_label, signal='post_save'):
     observed_item.save()
     return observed_item
 
+
 def stop_observing(observed, observer, signal='post_save'):
     """
     Remove an observed item.
     """
     observed_item = ObservedItem.objects.get_for(observed, observer, signal)
     observed_item.delete()
+
 
 def send_observation_notices_for(observed, signal='post_save', extra_context=None):
     """
@@ -456,16 +473,19 @@ def send_observation_notices_for(observed, signal='post_save', extra_context=Non
         observed_item.send_notice(extra_context)
     return observed_items
 
+
 def is_observing(observed, observer, signal='post_save'):
     if isinstance(observer, AnonymousUser):
         return False
     try:
-        observed_items = ObservedItem.objects.get_for(observed, observer, signal)
-        return True
+        ObservedItem.objects.get_for(observed, observer, signal)
     except ObservedItem.DoesNotExist:
         return False
     except ObservedItem.MultipleObjectsReturned:
         return True
+    else:
+        return True
+
 
 def handle_observations(sender, instance, *args, **kw):
     send_observation_notices_for(instance)
